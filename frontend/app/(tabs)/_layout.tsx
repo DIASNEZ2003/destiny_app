@@ -55,8 +55,8 @@ export default function TabLayout() {
           right: 0,
           
           // --- PADDING & HEIGHT ---
-          height: 60,             // Height must be enough for padding
-          paddingBottom: 25,      // Space below the icons
+          height: 88,             // Height must be enough for padding
+          paddingBottom: 50,      // Space below the icons
           paddingTop: 10,         // Space above the icons
           
           // --- SHADOW ---

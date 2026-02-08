@@ -20,21 +20,23 @@ const Messenger = () => {
   const flatListRef = useRef();
   const isFocused = useIsFocused();
 
-  // 1. UNIVERSAL KEYBOARD LISTENER (Works on both Android & iOS)
+  // 1. KEYBOARD LISTENER (Ensures input follows keyboard on Android)
   useEffect(() => {
-    const keyboardShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const keyboardHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-
-    const showSubscription = Keyboard.addListener(keyboardShowEvent, () => setKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener(keyboardHideEvent, () => setKeyboardVisible(false));
-
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', 
+      () => setKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', 
+      () => setKeyboardVisible(false)
+    );
     return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
+      showSub.remove();
+      hideSub.remove();
     };
   }, []);
 
-  // 2. ADMIN SYNC
+  // 2. SYNC WITH ADMIN (DESTINY) LIVE STATUS
   useEffect(() => {
     const adminUid = "KLQoW8g03nT22j2vCd9NELRXq0r1"; 
     const adminRef = ref(db, `users/${adminUid}`);
@@ -51,7 +53,7 @@ const Messenger = () => {
     return () => unsubscribe();
   }, []);
 
-  // 3. CHAT SYNC (Auto Delivered/Seen)
+  // 3. REAL-TIME CHAT SYNC & SEEN/DELIVERED AUTO-LOGIC
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) return;
@@ -66,54 +68,72 @@ const Messenger = () => {
         const updates = {};
         Object.keys(data).forEach(id => {
           const msg = data[id];
+          
+          // SEEN: If user opens this screen, mark Admin messages as Seen
           if (isFocused && msg.sender === 'admin' && msg.seen !== true) {
             updates[`chats/${user.uid}/${id}/seen`] = true;
             updates[`chats/${user.uid}/${id}/status`] = 'seen';
           }
+          
+          // DELIVERED: If Admin is online, mark User messages as Delivered
           if (msg.sender === 'user' && msg.status === 'sent' && adminInfo.status === 'online') {
             updates[`chats/${user.uid}/${id}/status`] = 'delivered';
           }
         });
         if (Object.keys(updates).length > 0) update(ref(db), updates);
-      } else { setMessages([]); }
+      } else {
+        setMessages([]);
+      }
       setLoading(false);
     });
     return () => unsubscribe();
   }, [isFocused, adminInfo.status]);
 
+  // 4. SEND OR EDIT MESSAGE
   const handleSend = async () => {
     if (inputText.trim() === "") return;
     const user = auth.currentUser;
     try {
       if (editingId) {
-        await update(ref(db, `chats/${user.uid}/${editingId}`), { text: inputText, isEdited: true, editTimestamp: Date.now() });
+        await update(ref(db, `chats/${user.uid}/${editingId}`), { 
+          text: inputText, isEdited: true, editTimestamp: Date.now() 
+        });
         setEditingId(null);
       } else {
         const initialStatus = adminInfo.status === 'online' ? 'delivered' : 'sent';
         await push(ref(db, `chats/${user.uid}`), {
-          text: inputText, sender: 'user', timestamp: Date.now(), isEdited: false, status: initialStatus, seen: false
+          text: inputText,
+          sender: 'user',
+          timestamp: Date.now(),
+          isEdited: false,
+          status: initialStatus,
+          seen: false
         });
       }
       setInputText("");
+      Keyboard.dismiss();
     } catch (error) { Alert.alert("Error", "Action failed"); }
   };
 
   const renderItem = ({ item }) => {
     const isMe = item.sender === 'user';
     return (
-      <View className={`mb-3 ${isMe ? 'items-end' : 'items-start'}`}>
+      <View className={`mb-4 ${isMe ? 'items-end' : 'items-start'}`}>
         <TouchableOpacity 
           onLongPress={() => isMe && Alert.alert("Options", "Choose", [
             { text: "Edit", onPress: () => { setInputText(item.text); setEditingId(item.id); } },
             { text: "Delete", onPress: () => remove(ref(db, `chats/${auth.currentUser.uid}/${item.id}`)), style: 'destructive' },
             { text: "Cancel" }
           ])}
-          className={`px-4 py-2.5 max-w-[80%] rounded-2xl ${isMe ? 'bg-red-900 rounded-br-none' : 'bg-gray-200 rounded-bl-none'}`}
+          activeOpacity={0.8}
+          className={`px-4 py-3 max-w-[80%] rounded-2xl ${isMe ? 'bg-[#7f1d1d] rounded-br-none' : 'bg-gray-200 rounded-bl-none'}`}
         >
           <Text className={`text-[15px] ${isMe ? 'text-white' : 'text-black'}`}>{item.text}</Text>
         </TouchableOpacity>
         <View className="flex-row items-center mt-1 px-1">
-          <Text className="text-[9px] text-gray-400">{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+          <Text className="text-[9px] text-gray-400">
+            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </Text>
           {isMe && (
             <Text className={`text-[9px] font-black uppercase italic ml-1 ${item.seen ? 'text-blue-500' : 'text-gray-400'}`}>
                • {item.seen ? 'Seen' : item.status === 'delivered' ? 'Delivered' : 'Sent'}
@@ -128,19 +148,19 @@ const Messenger = () => {
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      {/* FIX: use 'padding' for iOS and 'height' for Android.
-         'height' resizes the view when keyboard opens, preventing overlap.
-      */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === "ios" ? "padding" : "height"} 
         style={{ flex: 1 }}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0} // Adjust if you have a custom header
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        
         {/* HEADER */}
-        <View className="flex-row items-center px-5 py-3 border-b border-gray-100 bg-white">
-          <View className="w-10 h-10 rounded-full bg-red-900 items-center justify-center overflow-hidden">
-            {adminInfo.profileImage ? <Image source={{ uri: adminInfo.profileImage }} className="w-full h-full" /> : <Text className="text-white font-bold">{adminInfo.fullName[0]}</Text>}
+        <View className="flex-row items-center px-5 py-4 border-b border-gray-100 bg-white">
+          <View className="w-10 h-10 rounded-full bg-[#7f1d1d] items-center justify-center overflow-hidden border border-gray-100">
+            {adminInfo.profileImage ? (
+              <Image source={{ uri: adminInfo.profileImage }} className="w-full h-full" />
+            ) : (
+              <Text className="text-white font-bold">{adminInfo.fullName[0]}</Text>
+            )}
           </View>
           <View className="ml-3">
             <Text className="font-black text-gray-900 text-sm">{adminInfo.fullName}</Text>
@@ -157,8 +177,7 @@ const Messenger = () => {
           data={messages}
           renderItem={renderItem}
           keyExtractor={item => item.id}
-          // Add extra padding at bottom so last message isn't hidden by input
-          contentContainerStyle={{ padding: 20, paddingBottom: 20 }}
+          contentContainerStyle={{ padding: 20, paddingBottom: 10 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
@@ -166,7 +185,7 @@ const Messenger = () => {
         <View className="bg-white border-t border-gray-100 shadow-lg">
           {editingId && (
             <View className="bg-gray-50 px-4 py-2 flex-row justify-between items-center border-b border-gray-100">
-              <Text className="text-[10px] text-gray-500 italic font-bold">Editing...</Text>
+              <Text className="text-[10px] text-gray-500 italic font-bold">Editing message...</Text>
               <TouchableOpacity onPress={() => { setEditingId(null); setInputText(""); }}><Ionicons name="close-circle" size={18} color="gray" /></TouchableOpacity>
             </View>
           )}
@@ -175,10 +194,9 @@ const Messenger = () => {
             style={{ 
               paddingHorizontal: 15, 
               paddingTop: 10, 
-              // DYNAMIC PADDING:
-              // - Keyboard OPEN: 10px (sits tight on keyboard)
-              // - Keyboard CLOSED: 90px (clears the floating Tab Bar)
-              paddingBottom: isKeyboardVisible ? 10 : 90, 
+              // FIXED PADDING: sits high when keyboard is hidden to avoid Tab Bar, 
+              // sits low when keyboard is visible to follow fingers.
+              paddingBottom: isKeyboardVisible ? 15 : 90, 
               flexDirection: 'row', 
               alignItems: 'center',
               backgroundColor: 'white'
@@ -195,10 +213,11 @@ const Messenger = () => {
                 maxHeight: 100,
                 color: '#000'
               }}
-              placeholder="Write a message..."
+              placeholder="Aa"
               value={inputText}
               onChangeText={setInputText}
               multiline
+              placeholderTextColor="#9ca3af"
             />
             <TouchableOpacity 
               onPress={handleSend}
